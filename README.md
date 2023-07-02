@@ -1,1 +1,1 @@
-# Single_cell_RNASeq
+Workflows to analyze single cell RNASeq data
