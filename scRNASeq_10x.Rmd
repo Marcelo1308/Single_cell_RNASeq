@@ -1,0 +1,94 @@
+---
+title: "scRNASeq_10x"
+output: html_document
+date: '2023-07-02'
+---
+
+Upstream analysis for single cell RNA-Seq data
+
+Reference:
+- https://github.com/kpatel427/YouTubeTutorials/blob/main/singleCell_standard_workflow.R
+Data source: 
+- https://www.10xgenomics.com/resources/datasets/10-k-human-pbm-cs-multiome-v-1-0-chromium-controller-1-standard-2-0-0         
+
+```{r}
+library(Seurat)
+library(tidyverse)
+```
+
+Load the data from 10xGenomics
+```{r}
+nscl = Read10X_h5(paste0(getwd(), "/20k_NSCLC_DTC_3p_nextgem_Multiplex_count_raw_feature_bc_matrix.h5"))
+str(nscl) #Extract Gene expression matrix
+cts = nscl$'Gene Expression'
+```
+
+Create Seurat object from Counts (raw data non-normalize)
+- min.cells: Keep features that are expressed in at least 3 cells
+- min.features: Keep cells that have at least 200 genes
+```{r}
+nscl.seurat.object = CreateSeuratObject(counts = cts, project = "NSCLC", min.cells = 3, min.features = 200)
+str(nscl.seurat.object)
+```
+
+1. Quality Control (QC) 
+- MT reads (high mitochondrial genes means low quality cells)
+```{r}
+nscl.seurat.object[["percent.mt"]] = PercentageFeatureSet(nscl.seurat.object, pattern= "^MT-") #Calculate % mitochondrial genes
+View(nscl.seurat.object)
+
+VlnPlot(nscl.seurat.object, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol=3)
+FeatureScatter(nscl.seurat.object, feature1 = "nCount_RNA", feature2 = "nFeature_RNA") +
+  geom_smooth(method="lm")
+```
+
+2. Filtering
+```{r}
+nscl.seurat.object = subset(nscl.seurat.object, subset = nFeature_RNA > 200 & nFeature_RNA < 2500 &
+                              percent.mt < 5)
+```
+
+3. Normalize data
+```{r}
+nscl.seurat.object = NormalizeData(nscl.seurat.object, normalization.method = "logNormalize", scale.factor = 10000)
+```
+
+4. Identify highly variable features
+- Only focus on features (genes) that express high cell-to-cell variation to highlight biological signal
+```{r}
+nscl.seurat.object = FindVariableFeatures(nscl.seurat.object, selection.method= "vst", nfeatures= 2000)
+top10 = head(VariableFeatures(nscl.seurat.object), 10)
+plot1 = VariableFeaturePlot(nscl.seurat.object)
+LabelPoints(plot=plot1, points=top10, repel = TRUE)
+```
+
+5. Scaling
+- Before doing dimensionality reduction to account for sources of variation (batch effect)
+```{r}
+all.genes = rownames(nscl.seurat.object)
+nscl.seurat.object = ScaleData(nscl.seurat.object, features = all.genes)
+```
+
+6. Perform linear dimensionality reduction
+```{r}
+nscl.seurat.object = RunPCA(nscl.seurat.object, features = VariableFeatures(object=nscl.seurat.object))
+DimHeatmap(nscl.seurat.object, dims=1, cells=500, balanced = TRUE)
+ElbowPlot(nscl.seurat.object) #determine dimensionality of data
+```
+
+7. Clustering
+```{r}
+nscl.seurat.object = FindNeighbors(nscl.seurat.object, dims=1:15) #Find cells with similar expression pattern
+nscl.seurat.object = FindClusters(nscl.seurat.object, resolution=c(0.3,0.5,0.7,1)) #resolution=granularity of the clusters ---> higher resolution higher number of clusters
+View(nscl.seurat.object@meta.data)
+DimPlot(nscl.seurat.object, group_by = "RNA_snn_res_0.3", label=TRUE)
+Idents(nscl.seurat.object) 
+Idents(nscl.seurat.object) = "RNA_snn_res_0.3"
+```
+
+8. Perform non-linear-dimensionality reduction
+```{r}
+nscl.seurat.object = RunUMAP(nscl.seurat.object, dims=1:15)
+DimPlot(nscl.seurat.object, reduction="UMAP")
+```
+

@@ -1,0 +1,130 @@
+---
+title: "scRNASeq_CancerGenomics"
+output: html_document
+date: '2023-07-02'
+---
+
+Single-cell analysis Workshop Cancer Genomics
+
+Data source: 
+- EXP0001_PCG_beforeQC.txt  
+
+Load libraries
+```{r}
+library(Seurat)
+library(tidyverse)
+library(AnnotationDbi) 
+library(org.Hs.eg.db)
+library(dplyr)
+```
+
+Load data
+```{r}
+f <- read.csv("EXP0001_PCG_beforeQC.txt", sep="\t", row.names = 1)
+```
+
+Re-formatting data (too large to analyze so we will subset data just for the example)
+```{r}
+# removing the first row
+f <- f[-c(1:3),1:1000]
+
+#Gene annotation from ENSEMBL --> SYMBOL
+colnames(f)[1] = "Gene"
+f$Gene <- mapIds(org.Hs.eg.db,
+                   keys=row.names(f),
+                   column="SYMBOL", 
+                   keytype="ENSEMBL", 
+                   multiVals="first")
+
+#Remove duplicates and NA
+f <- distinct(f,Gene, .keep_all= TRUE)
+f <- f %>% drop_na(Gene)
+row.names(f)<-f$Gene
+f$Gene <- NULL
+```
+
+Create Seurat object from Counts (raw data non-normalize)
+- min.cells: Keep features that are expressed in at least 3 cells
+- min.features: Keep cells that have at least 200 genes
+```{r}
+pb <- CreateSeuratObject(counts = f, min.cells = 3, min.features = 200)
+```
+
+1. Quality Control (QC) 
+- MT reads (high mitochondrial genes means low quality cells)
+```{r}
+pb[["percent.mt"]] = PercentageFeatureSet(pb, pattern= "^MT-") #Calculate % mitochondrial genes
+View(pb)
+
+VlnPlot(pb, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol=3)
+FeatureScatter(pb, feature1 = "nCount_RNA", feature2 = "nFeature_RNA") +
+  geom_smooth(method="lm")
+```
+
+2. Filtering (no filtering in this case based on previous plots)
+```{r}
+#pb = subset(pb, subset = nFeature_RNA > 200 & nFeature_RNA < 2500 & percent.mt < 5)
+```
+
+3. Normalize data
+```{r}
+pb <- NormalizeData(pb)
+```
+
+4. Identify highly variable features
+- Only focus on features (genes) that express high cell-to-cell variation to highlight biological signal
+```{r}
+pb <- FindVariableFeatures(pb, selection.method = "vst", nfeatures = 2000)
+list_of_variable_features <- VariableFeatures(pb)
+top10 <- head(VariableFeatures(pb), 10) # Identify the 10 most highly variable genes
+plot1 <- VariableFeaturePlot(pb)
+plot2 <- LabelPoints(plot = plot1, points = top10, repel = TRUE)
+plot1 + plot2
+```
+
+5. Scaling
+- Before doing dimensionality reduction to account for sources of variation (batch effect)
+```{r}
+all.genes <- rownames(pb)
+pb <- ScaleData(pb, features = all.genes)
+```
+
+6. Perform linear dimensionality reduction
+```{r}
+pb <- RunPCA(pb, features = VariableFeatures(object = pb))
+VizDimLoadings(pb, dims = 1:2, reduction = "pca")
+DimHeatmap(pb, dims = 1:15, cells = 500, balanced = TRUE)
+pb <- JackStraw(pb, num.replicate = 100)
+pb <- ScoreJackStraw(pb, dims = 1:20)
+JackStrawPlot(pb, dims = 1:15)  #determine dimensionality of data
+ElbowPlot(pb)  #determine dimensionality of data
+```
+
+7. Clustering
+```{r}
+pb <- FindNeighbors(pb, dims = 1:10)
+pb <- FindClusters(pb, resolution = 0.5)
+DimPlot(pb, label=TRUE)
+head(Idents(pb), 5)
+```
+
+8. Perform non-linear-dimensionality reduction
+```{r}
+pb <- RunUMAP(pb, dims = 1:10)
+DimPlot(pb, reduction = "umap")
+```
+
+9. Find markers of each cluster
+```{r}
+pb.markers <- FindAllMarkers(pb, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25)
+
+#Looking markers 
+VlnPlot(pb, features = c("FTL","RAP1A","ISG15"))
+VlnPlot(pb, features = c("ISG15"))
+FeaturePlot(pb, features = "STATH")
+FeaturePlot(pb, features = "ISG15")
+FeaturePlot(pb, features = "ISG15", pt.size = 2)
+
+check <- data.frame(Idents(pb))
+```
+
