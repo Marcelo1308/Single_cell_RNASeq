@@ -1,0 +1,83 @@
+---
+title: "Cluster_Identification"
+output: html_document
+date: '2023-07-02'
+---
+
+Reference
+Website: https://bioinformagician.org/
+Github: https://github.com/kpatel427
+
+Vignettes
+https://satijalab.org/seurat/articles/pbmc3k_tutorial.html#finding-differentially-expressed-features-cluster-biomarkers-
+https://hbctraining.github.io/In-depth-NGS-Data-Analysis-Course/sessionIV/lessons/SC_marker_identification.html
+
+```{r}
+library(Seurat)
+library(SeuratDisk)
+```
+
+Load data
+```{r}
+ifnb_harmony = readRDS(filename)
+```
+
+Visualize data
+```{r}
+View(ifnb_harmony@meta.data)
+clusters = DimPlot(ifnb_harmony, reduction = 'umap', group.by = 'seurat_clusters', label = T)
+condition = DimPlot(ifnb_harmony, reduction = 'umap', group.by = 'condition')
+condition|clusters
+```
+
+findAll markers: Compare one cluster vs all others 
+```{r}
+FindAllMarkers(ifnb_harmony,
+               logfc.threshold = 0.25, #min logfc 
+               min.pct = 0.1, #genes that are detected on 50% frequency across clusters
+               only.pos = T,
+               test.use = 'DESeq2',
+               slot = 'counts')
+```
+
+findConserved markers: Compare one cluster vs all others when you have two conditions (ex. separates cells by condition and does the analysis with the splitted data)
+```{r}
+markers_cluster3 = FindConservedMarkers(ifnb_harmony,
+                                        ident.1 =  3, #cluster
+                                        grouping.var = 'stim') #condition
+head(markers_cluster3)
+
+#Visualize top features
+FeaturePlot(ifnb_harmony, features = c('FCGR3A'), min.cutoff = 'q10')
+```
+
+Rename cluster 3 Ident (names)
+```{r}
+Idents(ifnb_harmony)
+RenameIdents(ifnb_harmony, '3' = 'CD16 Mono')
+DimPlot(ifnb_harmony, reduction = 'umap', label = T)
+```
+
+Some cells already have annotations provided in the metadata (check for them before calculating again)
+```{r}
+Idents(ifnb_harmony) = ifnb_harmony@meta.data$seurat_annotations
+Idents(ifnb_harmony)
+DimPlot(ifnb_harmony, reduction = 'umap', label = T)
+```
+
+Find markers between conditions (findMarkers function to compare one cluster vs another)
+```{r}
+ifnb_harmony$celltype.cnd = paste0(ifnb_harmony$seurat_annotations, '_', ifnb_harmony$stim)
+View(ifnb_harmony@meta.data)
+Idents(ifnb_harmony) = ifnb_harmony$celltype.cnd
+DimPlot(ifnb_harmony, reduction = 'umap', label = T)
+
+b.interferon.response = FindMarkers(ifnb_harmony, ident.1 = "CD16 Mono_STIM", ident.2 = "CD16 Mono_CTRL")
+head(b.interferon.response)
+```
+
+Plotting conserved features vs DE features between conditions
+```{r}
+FeaturePlot(ifnb_harmony, features = c('FCGR3A', 'AIF1', 'IFIT1'), split.by = 'stim', min.cutoff = 'q10')
+```
+
