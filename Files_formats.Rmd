@@ -1,0 +1,40 @@
+---
+title: "scRNAseq_files"
+output: html_document
+date: '2023-07-02'
+---
+
+```{r}
+library(Seurat)
+library(SeuratDisk)
+```
+
+Read RDS format (object Seurat already processed in R)
+```{r}
+rds_obj = readRDS('example.rds')
+```
+
+10X CellRanger .HDF5 format
+```{r}
+hdf5_obj = Read10X_h5(filename, use.names = T, unique.features = T) #Sparse matrix
+seurat_hdf5 = CreateSeuratObject(counts = hdf5_obj)
+```
+
+.mtx file (individual files containing matrix, barcodes)
+```{r}
+mtx_obj = ReadMtx(mtx = "", features="", cells = "")
+seurat_mtx = CreateSeuratObject(counts = mtx_obj)
+```
+
+loom files
+```{r}
+loom_obj = Connect(filename, mode = 'r')
+seurat_loom = as.Seurat(loom_obj)
+```
+
+h5ad format (Store scRNAseq data in Scanpy-Python)
+```{r}
+Convert("", dest = "h5seurat", overwrite = T)
+seurat_anndata = LoadH5Seurat(filename)
+```
+
