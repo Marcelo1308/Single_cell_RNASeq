@@ -1,0 +1,169 @@
+---
+title: "scRNAseq_Melanoma"
+output: html_document
+date: '2023-03-20'
+---
+
+```{r}
+library("AnnotationDbi") 
+library("org.Hs.eg.db")
+library("dplyr")
+library(tidyr)
+library(data.table)
+library(Seurat)
+library(dorothea)
+library(viper)
+```
+
+Funtion 
+```{r}
+
+compute_TFs_scores = function(RNA.counts.normalized,  file_name){
+  
+  dorothea2viper_regulons <- function(df) {
+    regulon_list <- split(df, df$tf)
+    viper_regulons <- lapply(regulon_list, function(regulon) {
+      tfmode <- stats::setNames(regulon$mor, regulon$target)
+      list(tfmode = tfmode, likelihood = rep(1, length(tfmode)))
+    })
+    
+    return(viper_regulons)
+  }
+  
+  data("dorothea_hs", package = "dorothea")
+  regulons <- dorothea_hs %>%
+    filter(confidence %in% c("A", "B", "C", "D"))
+  
+  regu <- dorothea2viper_regulons(regulons)
+  RNA.counts.normalized = as.data.frame(RNA.counts.normalized)
+  vpres<- viper(RNA.counts.normalized, regu, verbose = FALSE, minsize = 4)
+  
+  write.csv(vpres,paste0(getwd(), file_name, ".csv"))
+  
+  return(vpres)
+  
+}
+
+#' @param data matrix; TPM values (genes as rows and samples as columns)
+TPM_normalization <- function(data, log = FALSE, pseudo = 1) {
+  
+  # TPM normalization
+  if(log){
+    
+    if (pseudo == 0)
+      
+      warning("Using 0 pseudo: Inf may be generated.\n")
+    
+    data <- log2(data + pseudo)
+  }
+  
+  TPM_data <- t(t(data)*1e6/apply(data,2,sum))
+  
+  return(TPM_data)
+}
+```
+
+Input data
+```{r}
+setwd("/home/marcelo/Downloads")
+f <- read.csv("GSE72056_melanoma_single_cell_revised_v2.txt", sep="\t")
+f = f[-c(1:3),]
+colnames(f)[1] = "Gene"
+f <- distinct(f,Gene, .keep_all= TRUE)
+f <- f %>% drop_na(Gene)
+row.names(f)<-f$Gene
+f$Gene <- NULL
+f = f[,1:1001]
+keep_OUT = which(rowSums(f) == 0)
+f = f[-keep_OUT, ]
+```
+
+Seurat object
+```{r}
+pb <- CreateSeuratObject(counts = f, 
+                         min.cells = 3,
+                         min.features = 200)
+# Normalization
+pb <- NormalizeData(pb)
+# Variable features
+pb <- FindVariableFeatures(pb, selection.method = "vst", nfeatures = 2000)
+# Scale data
+all.genes <- rownames(pb)
+pb <- ScaleData(pb, features = all.genes)
+DefaultAssay(pb)
+```
+
+```{r}
+#PCA
+pb <- RunPCA(pb, features = VariableFeatures(object = pb))
+
+#UMAP
+pb <- FindNeighbors(pb, dims = 1:10)
+pb <- FindClusters(pb, resolution = 0.5)
+pb <- RunUMAP(pb, dims = 1:10)
+```
+
+Plots
+```{r}
+DimPlot(pb, reduction = "umap", group.by = "seurat_clusters", label = T)
+levels(pb)
+```
+Find markers
+```{r}
+pb.markers <- FindAllMarkers(pb, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25)
+pb.markers = pb.markers[pb.markers$p_val_adj<0.05,]
+markers_0 = pb.markers[pb.markers$cluster==0,] #cluster 0 ----> marker = IL7R ---> T cells
+markers_1 = pb.markers[pb.markers$cluster==1,] #cluster 1 ----> marker = TYR ---> cancer cells
+markers_2 = pb.markers[pb.markers$cluster==2,] #cluster 2 ----> marker = EOMES ---> T cells
+markers_3 = pb.markers[pb.markers$cluster==3,] #cluster 3 ----> marker = MS4A1 ---> B cells
+markers_4 = pb.markers[pb.markers$cluster==4,] #cluster 4 ----> marker = IL7R ---> T cells
+markers_5 = pb.markers[pb.markers$cluster==5,] #cluster 5 ----> marker = IL7R ---> T cells
+markers_6 = pb.markers[pb.markers$cluster==6,] #cluster 6 ----> marker = IL7R ---> Unresolved
+markers_7 = pb.markers[pb.markers$cluster==7,] #cluster 7 ----> marker = IL7R ---> T cells
+
+new.cluster.ids <- c("Cancer", "T cells", "B cells", "Macrophages", "Endothelial", "CAF",
+                     "NK", "Unresolved")
+
+names(new.cluster.ids) <- levels(pb)
+pb <- RenameIdents(pb, new.cluster.ids)
+DimPlot(pb, reduction = "umap", label = TRUE, pt.size = 0.5) + NoLegend()
+
+VlnPlot(pb, features = c("IL7R","EOMES","BATF", "TYR", "MS4A1"))
+FeaturePlot(pb, features = "EOMES", pt.size = 2)
+
+```
+
+```{r}
+f = TPM_normalization(f)
+tfs = compute_TFs_scores(f, "TFs")
+tfs = data.frame(tfs)
+pb <- CreateSeuratObject(counts = tfs, 
+                         min.cells = 3,
+                         min.features = 200)
+
+# Scale data
+all.genes <- rownames(pb)
+pb <- ScaleData(pb, features = all.genes)
+DefaultAssay(pb)
+```
+
+```{r}
+#PCA
+pb <- RunPCA(pb, features = VariableFeatures(object = pb))
+
+#UMAP
+pb <- FindNeighbors(pb, dims = 1:10)
+pb <- FindClusters(pb, resolution = 0.5)
+pb <- RunUMAP(pb, dims = 1:10)
+```
+
+Plots
+```{r}
+DimPlot(pb, reduction = "umap", group.by = "seurat_clusters", label = T)
+levels(pb)
+```
+
+```{r}
+pb.markers <- FindAllMarkers(pb, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25, test.use = "DESeq2")
+```
+
